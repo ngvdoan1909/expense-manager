@@ -51,7 +51,7 @@ async function googleLogin() {
       <div class="mx-auto w-full max-w-sm">
         <div class="mb-6">
           <h2 class="text-2xl font-bold text-ink">{{ mode === 'login' ? 'Đăng nhập' : 'Đăng ký' }}</h2>
-          <p class="mt-1 text-sm text-stone-500">Sử dụng thư điện tử, mật khẩu hoặc xác thực Google.</p>
+          <p class="mt-1 text-sm text-stone-500">Sử dụng email, mật khẩu hoặc xác thực Google.</p>
         </div>
 
         <div v-if="authStore.configMissing" class="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -60,7 +60,7 @@ async function googleLogin() {
 
         <form class="space-y-4" @submit.prevent="submit">
           <label class="space-y-1">
-            <span class="text-sm font-semibold text-stone-600">Thư điện tử</span>
+            <span class="text-sm font-semibold text-stone-600">Email</span>
             <input v-model="email" class="form-input" required type="email" />
           </label>
 
