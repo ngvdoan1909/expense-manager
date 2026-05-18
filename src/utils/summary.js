@@ -64,6 +64,34 @@ export function calculateDailyAverage(transactions, dayCount) {
   }
 }
 
+export function getDaysInMonth(month, year) {
+  return new Date(Number(year), Number(month), 0).getDate()
+}
+
+export function summarizeByMonth(transactions, year) {
+  const rows = Array.from({ length: 12 }, (_, index) => ({
+    month: index + 1,
+    year: Number(year),
+    income: 0,
+    expense: 0,
+    profit: 0,
+    count: 0,
+  }))
+
+  transactions.forEach((item) => {
+    const month = Number(item.month)
+    if (month < 1 || month > 12) return
+
+    const row = rows[month - 1]
+    const amount = Number(item.amount || 0)
+    row[item.type] += amount
+    row.profit = row.income - row.expense
+    row.count += 1
+  })
+
+  return rows
+}
+
 export function getCurrentDateParts() {
   const now = new Date()
   return {

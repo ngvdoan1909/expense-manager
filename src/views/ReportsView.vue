@@ -5,12 +5,19 @@ import { useAuthStore } from '@/stores/auth'
 import { fetchTransactions } from '@/services/transactionService'
 import { formatPaymentMethod, formatTransactionType } from '@/utils/labels'
 import { formatCurrency } from '@/utils/money'
-import { getCurrentDateParts, summarizeByCategory, summarizeByPaymentMethod, summarizeTransactions } from '@/utils/summary'
+import {
+  getCurrentDateParts,
+  summarizeByCategory,
+  summarizeByMonth,
+  summarizeByPaymentMethod,
+  summarizeTransactions,
+} from '@/utils/summary'
 import { downloadCsv } from '@/utils/exportCsv'
 
 const authStore = useAuthStore()
 const now = getCurrentDateParts()
 const rows = ref([])
+const yearRows = ref([])
 const loading = ref(false)
 const error = ref('')
 const BarChart = shallowRef(null)
@@ -22,6 +29,8 @@ const filters = reactive({
 })
 
 const summary = computed(() => summarizeTransactions(rows.value))
+const yearSummary = computed(() => summarizeTransactions(yearRows.value))
+const yearlyMonthRows = computed(() => summarizeByMonth(yearRows.value, filters.year))
 const categoryRows = computed(() => summarizeByCategory(rows.value))
 const expenseRows = computed(() => categoryRows.value.filter((row) => row.type === 'expense'))
 const paymentRows = computed(() => summarizeByPaymentMethod(rows.value))
@@ -71,6 +80,29 @@ const paymentChartOptions = {
   },
 }
 
+const yearlyChartData = computed(() => ({
+  labels: yearlyMonthRows.value.map((row) => `Tháng ${row.month}`),
+  datasets: [
+    {
+      label: 'Thu',
+      data: yearlyMonthRows.value.map((row) => row.income),
+      backgroundColor: '#0f766e',
+    },
+    {
+      label: 'Chi',
+      data: yearlyMonthRows.value.map((row) => row.expense),
+      backgroundColor: '#c2410c',
+    },
+    {
+      label: 'Lãi',
+      data: yearlyMonthRows.value.map((row) => row.profit),
+      backgroundColor: '#2563eb',
+    },
+  ],
+}))
+
+const hasYearlyData = computed(() => yearlyMonthRows.value.some((row) => row.count > 0))
+
 function exportReport() {
   downloadCsv(
     `bao-cao-${filters.mode}-${filters.month || 'all'}-${filters.year}.csv`,
@@ -83,16 +115,27 @@ async function loadData() {
   loading.value = true
   error.value = ''
   try {
-    rows.value = await fetchTransactions(authStore.user.uid, {
-      month: filters.mode === 'month' ? filters.month : undefined,
-      year: filters.year,
-      limit: 500,
-    })
+    const uid = authStore.user.uid
+    const [periodRows, annualRows] = await Promise.all([
+      fetchTransactions(uid, {
+        month: filters.mode === 'month' ? filters.month : undefined,
+        year: filters.year,
+        limit: 5000,
+      }),
+      fetchTransactions(uid, {
+        year: filters.year,
+        limit: 5000,
+      }),
+    ])
+
+    rows.value = periodRows
+    yearRows.value = annualRows
   } catch (err) {
     error.value = err.code === 'permission-denied'
       ? 'Bạn chưa có quyền đọc Firestore. Hãy cập nhật Firestore Rules cho đường dẫn users/{uid}.'
       : err.message
     rows.value = []
+    yearRows.value = []
   } finally {
     loading.value = false
   }
@@ -188,6 +231,52 @@ onMounted(async () => {
       <div class="h-80">
         <component :is="BarChart" v-if="paymentRows.length && BarChart" :data="paymentChartData" :options="paymentChartOptions" />
         <div v-else class="flex h-full items-center justify-center text-sm text-stone-500">Chưa có dữ liệu.</div>
+      </div>
+    </section>
+
+    <div class="grid gap-4 md:grid-cols-3">
+      <StatCard title="Thu cả năm" :value="formatCurrency(yearSummary.income)" tone="income" />
+      <StatCard title="Chi cả năm" :value="formatCurrency(yearSummary.expense)" tone="expense" />
+      <StatCard title="Lãi cả năm" :value="formatCurrency(yearSummary.profit)" />
+    </div>
+
+    <section class="rounded-md border border-stone-200 bg-white p-5">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base font-bold text-ink">Thống kê theo năm {{ filters.year }}</h2>
+          <p class="text-sm text-stone-500">Tổng hợp thu, chi, lợi nhuận theo từng tháng.</p>
+        </div>
+        <span v-if="loading" class="text-sm text-stone-500">Đang tải...</span>
+      </div>
+
+      <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_460px]">
+        <div class="h-80">
+          <component :is="BarChart" v-if="hasYearlyData && BarChart" :data="yearlyChartData" :options="paymentChartOptions" />
+          <div v-else class="flex h-full items-center justify-center text-sm text-stone-500">Chưa có dữ liệu năm này.</div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-stone-200">
+            <thead>
+              <tr>
+                <th class="report-head">Tháng</th>
+                <th class="report-head text-right">Giao dịch</th>
+                <th class="report-head text-right">Thu</th>
+                <th class="report-head text-right">Chi</th>
+                <th class="report-head text-right">Lãi</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-stone-100">
+              <tr v-for="row in yearlyMonthRows" :key="row.month">
+                <td class="report-cell font-medium text-ink">Tháng {{ row.month }}</td>
+                <td class="report-cell text-right">{{ row.count }}</td>
+                <td class="report-cell text-right text-brand">{{ formatCurrency(row.income) }}</td>
+                <td class="report-cell text-right text-accent">{{ formatCurrency(row.expense) }}</td>
+                <td class="report-cell text-right font-semibold text-ink">{{ formatCurrency(row.profit) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   </div>

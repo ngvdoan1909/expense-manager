@@ -1,5 +1,5 @@
 <script setup>
-import { computed, markRaw, onMounted, ref, shallowRef } from 'vue'
+import { computed, markRaw, onMounted, reactive, ref, shallowRef } from 'vue'
 import StatCard from '@/components/StatCard.vue'
 import TransactionTable from '@/components/TransactionTable.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -18,6 +18,8 @@ import {
   calculateDailyAverage,
   findTopExpenseCategory,
   getCurrentDateParts,
+  getDaysInMonth,
+  summarizeByMonth,
   summarizeByPaymentMethod,
   summarizeTransactions,
 } from '@/utils/summary'
@@ -27,18 +29,32 @@ const loading = ref(false)
 const error = ref('')
 const monthRows = ref([])
 const previousMonthRows = ref([])
+const yearRows = ref([])
 const BarChart = shallowRef(null)
 const now = getCurrentDateParts()
-const previousPeriod = getPreviousMonth(now.month, now.year)
+const filters = reactive({
+  month: now.month,
+  year: now.year,
+})
 
-const todayRows = computed(() => monthRows.value.filter((row) => Number(row.day) === now.day))
+const previousPeriod = computed(() => getPreviousMonth(filters.month, filters.year))
+const isCurrentPeriod = computed(() => Number(filters.month) === now.month && Number(filters.year) === now.year)
+const selectedPeriodLabel = computed(() => `tháng ${filters.month}/${filters.year}`)
+const averageDayCount = computed(() => (
+  isCurrentPeriod.value ? now.day : getDaysInMonth(filters.month, filters.year)
+))
+const todayRows = computed(() => (
+  isCurrentPeriod.value ? monthRows.value.filter((row) => Number(row.day) === now.day) : []
+))
 const todaySummary = computed(() => summarizeTransactions(todayRows.value))
 const monthSummary = computed(() => summarizeTransactions(monthRows.value))
+const yearSummary = computed(() => summarizeTransactions(yearRows.value))
+const yearlyMonthRows = computed(() => summarizeByMonth(yearRows.value, filters.year))
 const recentRows = computed(() => monthRows.value.slice(0, 8))
-const dailyAverage = computed(() => calculateDailyAverage(monthRows.value, now.day))
+const dailyAverage = computed(() => calculateDailyAverage(monthRows.value, averageDayCount.value))
 const topExpense = computed(() => findTopExpenseCategory(monthRows.value))
 const paymentRows = computed(() => summarizeByPaymentMethod(monthRows.value).slice(0, 4))
-const forecast = computed(() => forecastEndOfMonth(monthRows.value, now.month, now.year, now.day))
+const forecast = computed(() => forecastEndOfMonth(monthRows.value, filters.month, filters.year, averageDayCount.value))
 const periodComparison = computed(() => comparePeriods(monthRows.value, previousMonthRows.value))
 const anomalies = computed(() => detectAnomalies(monthRows.value, previousMonthRows.value))
 const health = computed(() => calculateFinancialHealth(monthRows.value))
@@ -93,18 +109,21 @@ async function loadData() {
 
   try {
     const uid = authStore.user.uid
-    const [month, previousMonth] = await Promise.all([
-      fetchTransactions(uid, { month: now.month, year: now.year, limit: 500 }),
-      fetchTransactions(uid, { month: previousPeriod.month, year: previousPeriod.year, limit: 500 }),
+    const [month, previousMonth, year] = await Promise.all([
+      fetchTransactions(uid, { month: filters.month, year: filters.year, limit: 1000 }),
+      fetchTransactions(uid, { month: previousPeriod.value.month, year: previousPeriod.value.year, limit: 1000 }),
+      fetchTransactions(uid, { year: filters.year, limit: 5000 }),
     ])
     monthRows.value = month
     previousMonthRows.value = previousMonth
+    yearRows.value = year
   } catch (err) {
     error.value = err.code === 'permission-denied'
       ? 'Bạn chưa có quyền đọc Firestore. Hãy cập nhật Firestore Rules cho đường dẫn users/{uid}.'
       : err.message
     monthRows.value = []
     previousMonthRows.value = []
+    yearRows.value = []
   } finally {
     loading.value = false
   }
@@ -130,26 +149,40 @@ onMounted(async () => {
 
     <div>
       <h1 class="text-2xl font-bold text-ink">Tổng quan</h1>
-      <p class="mt-1 text-sm text-stone-500">Tổng hợp hôm nay và tháng {{ now.month }}/{{ now.year }}.</p>
+      <p class="mt-1 text-sm text-stone-500">Tổng hợp {{ selectedPeriodLabel }} và thống kê năm {{ filters.year }}.</p>
     </div>
 
-    <div class="grid gap-4 md:grid-cols-3">
+    <section class="rounded-md border border-stone-200 bg-white p-5">
+      <div class="grid gap-3 md:grid-cols-[120px_120px_auto]">
+        <input v-model.number="filters.month" class="form-input" max="12" min="1" placeholder="Tháng" type="number" />
+        <input v-model.number="filters.year" class="form-input" min="2020" placeholder="Năm" type="number" />
+        <button class="btn-primary" type="button" @click="loadData">Lọc tổng quan</button>
+      </div>
+    </section>
+
+    <div v-if="isCurrentPeriod" class="grid gap-4 md:grid-cols-3">
       <StatCard title="Thu hôm nay" :value="formatCurrency(todaySummary.income)" tone="income" />
       <StatCard title="Chi hôm nay" :value="formatCurrency(todaySummary.expense)" tone="expense" />
       <StatCard title="Lãi hôm nay" :value="formatCurrency(todaySummary.profit)" />
     </div>
 
     <div class="grid gap-4 md:grid-cols-3">
-      <StatCard title="Thu tháng" :value="formatCurrency(monthSummary.income)" tone="income" />
-      <StatCard title="Chi tháng" :value="formatCurrency(monthSummary.expense)" tone="expense" />
-      <StatCard title="Lãi tháng" :value="formatCurrency(monthSummary.profit)" />
+      <StatCard title="Thu trong tháng" :value="formatCurrency(monthSummary.income)" tone="income" />
+      <StatCard title="Chi trong tháng" :value="formatCurrency(monthSummary.expense)" tone="expense" />
+      <StatCard title="Lãi trong tháng" :value="formatCurrency(monthSummary.profit)" />
+    </div>
+
+    <div class="grid gap-4 md:grid-cols-3">
+      <StatCard title="Thu trong năm" :value="formatCurrency(yearSummary.income)" tone="income" />
+      <StatCard title="Chi trong năm" :value="formatCurrency(yearSummary.expense)" tone="expense" />
+      <StatCard title="Lãi trong năm" :value="formatCurrency(yearSummary.profit)" />
     </div>
 
     <section class="rounded-md border border-stone-200 bg-white p-5">
       <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 class="text-base font-bold text-ink">Tài chính thông minh</h2>
-          <p class="text-sm text-stone-500">Dự báo, cảnh báo và điểm sức khỏe dựa trên dữ liệu tháng này.</p>
+          <p class="text-sm text-stone-500">Dự báo, cảnh báo và điểm sức khỏe dựa trên dữ liệu {{ selectedPeriodLabel }}.</p>
         </div>
         <div class="rounded-md border border-stone-200 px-4 py-2 text-right">
           <p class="text-xs font-semibold uppercase tracking-normal text-stone-500">Điểm sức khỏe</p>
@@ -184,7 +217,7 @@ onMounted(async () => {
         </div>
         <div class="h-80">
           <component :is="BarChart" v-if="monthRows.length && BarChart" :data="chartData" :options="chartOptions" />
-          <div v-else class="flex h-full items-center justify-center text-sm text-stone-500">Chưa có dữ liệu tháng này.</div>
+          <div v-else class="flex h-full items-center justify-center text-sm text-stone-500">Chưa có dữ liệu trong kỳ này.</div>
         </div>
       </section>
 
@@ -241,9 +274,45 @@ onMounted(async () => {
       />
     </div>
 
+    <section class="rounded-md border border-stone-200 bg-white p-5">
+      <h2 class="mb-4 text-base font-bold text-ink">Thống kê theo năm {{ filters.year }}</h2>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-stone-200">
+          <thead>
+            <tr>
+              <th class="year-head">Tháng</th>
+              <th class="year-head text-right">Giao dịch</th>
+              <th class="year-head text-right">Thu</th>
+              <th class="year-head text-right">Chi</th>
+              <th class="year-head text-right">Lãi</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-stone-100">
+            <tr v-for="row in yearlyMonthRows" :key="row.month">
+              <td class="year-cell font-medium text-ink">Tháng {{ row.month }}</td>
+              <td class="year-cell text-right">{{ row.count }}</td>
+              <td class="year-cell text-right text-brand">{{ formatCurrency(row.income) }}</td>
+              <td class="year-cell text-right text-accent">{{ formatCurrency(row.expense) }}</td>
+              <td class="year-cell text-right font-semibold text-ink">{{ formatCurrency(row.profit) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="space-y-3">
       <h2 class="text-base font-bold text-ink">Giao dịch gần đây</h2>
       <TransactionTable :loading="loading" :rows="recentRows" />
     </section>
   </div>
 </template>
+
+<style scoped>
+.year-head {
+  @apply px-4 py-3 text-left text-xs font-bold uppercase tracking-normal text-stone-500;
+}
+
+.year-cell {
+  @apply px-4 py-3 text-sm text-stone-600;
+}
+</style>
